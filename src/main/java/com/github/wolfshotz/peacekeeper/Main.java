@@ -37,7 +37,7 @@ public class Main
 
     public static void main(String[] args)
     {
-        GatewayDiscordClient client = DiscordClient.create(System.getenv("token")).login().block();
+        GatewayDiscordClient client = DiscordClient.create(System.getProperty("token")).login().block();
 
         refreshCommands(client);
 
