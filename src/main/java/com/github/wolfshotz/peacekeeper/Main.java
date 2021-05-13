@@ -8,7 +8,10 @@ import discord4j.core.event.domain.InteractionCreateEvent;
 import discord4j.core.object.command.ApplicationCommandInteraction;
 import discord4j.core.object.command.ApplicationCommandInteractionOption;
 import discord4j.core.object.command.ApplicationCommandInteractionOptionValue;
+import discord4j.core.object.entity.Guild;
 import discord4j.core.object.entity.Member;
+import discord4j.core.object.entity.User;
+import discord4j.core.spec.EmbedCreateSpec;
 import discord4j.discordjson.json.ApplicationCommandOptionData;
 import discord4j.discordjson.json.ApplicationCommandRequest;
 import discord4j.rest.RestClient;
@@ -16,16 +19,19 @@ import discord4j.rest.http.client.ClientException;
 import discord4j.rest.interaction.InteractionResponse;
 import discord4j.rest.json.response.ErrorResponse;
 import discord4j.rest.util.ApplicationCommandOptionType;
+import discord4j.rest.util.Color;
 import discord4j.rest.util.Permission;
 import org.reactivestreams.Publisher;
+import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 import reactor.util.Logger;
 import reactor.util.Loggers;
+import reactor.util.annotation.Nullable;
 
 import javax.naming.NoPermissionException;
+import java.time.Instant;
 import java.util.Arrays;
 import java.util.List;
-import java.util.Optional;
 import java.util.Scanner;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -142,15 +148,6 @@ public class Main
     // must return the response of the command
     private static Publisher<?> globalBan(GatewayDiscordClient client, InteractionCreateEvent event)
     {
-        Optional<Member> opt = event.getInteraction().getMember();
-        Mono<Void> permissions = Mono.error(new NoPermissionException());
-        if (opt.isPresent())
-        {
-            Member member = opt.get();
-            permissions = member.getBasePermissions()
-                    .flatMap(set -> set.contains(Permission.BAN_MEMBERS)? Mono.empty() : Mono.error(new NoPermissionException()));
-        }
-
         InteractionResponse response = event.getInteractionResponse();
         ApplicationCommandInteraction args = event.getInteraction().getCommandInteraction();
         long userId = args.getOption("userid")
@@ -163,17 +160,15 @@ public class Main
                 .map(ApplicationCommandInteractionOptionValue::asString)
                 .orElse("<No Reason Specified>");
 
+        Member executor = event.getInteraction().getMember().orElse(null);
+
         return event.acknowledge()
-                .then(permissions)
+                .then(ensurePermissions(executor))
                 .then(client.getUserById(Snowflake.of(userId)))
-                .doOnSuccess(user -> client.getGuilds()
-                        .flatMap(guild -> guild.ban(user.getId(), spec -> spec.setReason(reason)))
-                        .blockLast())
+                .flatMap(user -> banUserIn(user, client.getGuilds(), executor, reason))
                 .flatMap(user -> response.createFollowupMessage(String.format("User `%s` (ID: `%s`) has been banned across all servers for: \"%s\"", user.getTag(), user.getId().asString(), reason)))
                 .onErrorResume(ClientException.class, e ->
                 {
-                    LOG.error("Unable to process ban", e);
-
                     if (e.getErrorResponse().isPresent())
                     {
                         ErrorResponse er = e.getErrorResponse().get();
@@ -182,9 +177,36 @@ public class Main
                             return response.createFollowupMessage("Are you gonna supply an ACTUAL user id?");
                     }
 
+                    LOG.error("Unable to process ban", e);
                     return response.createFollowupMessage("SOMETHING went wrong when banning...");
                 })
                 .onErrorResume(NoPermissionException.class, e -> response.createFollowupMessage("You don't have permission to use this, buddy."));
+    }
+
+    private static Mono<Void> ensurePermissions(@Nullable Member member)
+    {
+        if (member != null)
+            return member.getBasePermissions()
+                    .flatMap(set -> set.contains(Permission.BAN_MEMBERS)? Mono.empty() : Mono.error(new NoPermissionException()));
+        return Mono.error(new NoPermissionException());
+    }
+
+    private static Mono<User> banUserIn(User user, Flux<Guild> guilds, Member executor, String reason)
+    {
+        return guilds.flatMap(guild -> guild.ban(user.getId(), spec -> spec.setReason(reason))
+                .flatMap(__ -> guild.getPublicUpdatesChannel()
+                        .flatMap(channel -> channel.createEmbed(spec -> createBanEmbed(spec, user, executor, reason)))))
+                .then(Mono.just(user));
+    }
+
+    private static void createBanEmbed(EmbedCreateSpec spec, User user, Member executor, String reason)
+    {
+        spec.setAuthor(executor.getUsername(), null, executor.getAvatarUrl())
+                .setTitle("User `%s` (ID: `%s`) has been banned across all servers")
+                .setThumbnail(user.getAvatarUrl())
+                .setDescription("**Reason:** " + reason)
+                .setColor(Color.RED)
+                .setTimestamp(Instant.now());
     }
 
 }
