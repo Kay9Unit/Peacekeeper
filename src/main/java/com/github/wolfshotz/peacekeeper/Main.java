@@ -29,26 +29,29 @@ import reactor.util.Loggers;
 import reactor.util.annotation.Nullable;
 
 import javax.naming.NoPermissionException;
+import java.io.BufferedReader;
+import java.io.IOException;
+import java.io.InputStreamReader;
+import java.net.URL;
 import java.time.Instant;
-import java.util.Arrays;
-import java.util.List;
-import java.util.Scanner;
-import java.util.concurrent.ExecutorService;
+import java.util.*;
 import java.util.concurrent.Executors;
 import java.util.stream.Collectors;
 
 public class Main
 {
     private static final Logger LOG = Loggers.getLogger(Main.class);
+    private static final String ADMINS_URL = "https://github.com/WolfShotz/Peacekeeper/blob/dca50ea0f8f0426e0d23d83e1c98f1ff9e4071a5/src/main/resources/admins.txt";
+    private static final List<Long> ADMIN_LIST = Collections.synchronizedList(new ArrayList<>());
 
     public static void main(String[] args)
     {
         GatewayDiscordClient client = DiscordClient.create(System.getProperty("token")).login().block();
 
         refreshCommands(client);
+//        collectAdmins();
 
-        ExecutorService service = Executors.newSingleThreadExecutor();
-        service.submit(() -> console(client));
+        Executors.newSingleThreadExecutor().submit(() -> console(client));
         Runtime.getRuntime().addShutdownHook(new Thread(() -> client.logout().block()));
 
         client.on(new ReactiveEventAdapter()
@@ -194,8 +197,9 @@ public class Main
     private static Mono<User> banUserIn(User user, Flux<Guild> guilds, Member executor, String reason)
     {
         return guilds.flatMap(guild -> guild.ban(user.getId(), spec -> spec.setReason(reason))
-                .then(guild.getPublicUpdatesChannel()
-                        .flatMap(channel -> channel.createEmbed(spec -> createBanEmbed(spec, user, executor, guild, reason)))))
+                .then(executor.getGuild())
+                .flatMap(from -> guild.getPublicUpdatesChannel()
+                        .flatMap(channel -> channel.createEmbed(spec -> createBanEmbed(spec, user, executor, from, reason)))))
                 .then(Mono.just(user));
     }
 
@@ -209,4 +213,35 @@ public class Main
                 .setTimestamp(Instant.now());
     }
 
+    @SuppressWarnings("ConstantConditions")
+    private static void collectAdmins()
+    {
+        ADMIN_LIST.clear();
+        BufferedReader reader;
+
+        try (InputStreamReader stream = new InputStreamReader(new URL(ADMINS_URL).openStream()))
+        {
+            reader = new BufferedReader(stream);
+        }
+        catch (IOException e)
+        {
+            e.printStackTrace();
+            reader = new BufferedReader(new InputStreamReader(Main.class.getResourceAsStream("admins.txt")));
+        }
+
+        try
+        {
+            String line;
+            while ((line = reader.readLine()) != null)
+            {
+                ADMIN_LIST.add(Long.parseLong(line.substring(0, 18).trim()));
+            }
+            reader.close();
+        }
+        catch (IOException e)
+        {
+            LOG.error("Could not Load admins. Shutting down.", e);
+            System.exit(-1);
+        }
+    }
 }
