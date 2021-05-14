@@ -1,5 +1,8 @@
 package com.github.wolfshotz.peacekeeper.commands;
 
+import com.fasterxml.jackson.annotation.JsonProperty;
+import com.fasterxml.jackson.databind.annotation.JsonDeserialize;
+import com.fasterxml.jackson.databind.annotation.JsonSerialize;
 import discord4j.core.event.domain.InteractionCreateEvent;
 import discord4j.discordjson.json.ApplicationCommandOptionData;
 import discord4j.discordjson.json.ApplicationCommandRequest;
@@ -12,6 +15,8 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
+@JsonSerialize
+@JsonDeserialize
 public abstract class Command implements ApplicationCommandRequest
 {
     private final String name;
@@ -31,18 +36,21 @@ public abstract class Command implements ApplicationCommandRequest
     }
 
     @Override
+    @JsonProperty("name")
     public String name()
     {
         return name;
     }
 
     @Override
+    @JsonProperty("description")
     public String description()
     {
         return description;
     }
 
     @Override
+    @JsonProperty("options")
     public Possible<List<ApplicationCommandOptionData>> options()
     {
         return options == null? Possible.absent() : Possible.of(options);

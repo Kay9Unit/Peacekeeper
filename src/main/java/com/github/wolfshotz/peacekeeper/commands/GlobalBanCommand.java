@@ -110,6 +110,7 @@ public class GlobalBanCommand extends Command
                 .setThumbnail(user.getAvatarUrl())
                 .setDescription("**Reason:** " + reason)
                 .setColor(Color.RED)
-                .setTimestamp(Instant.now()));
+                .setTimestamp(Instant.now()))
+                .onErrorResume(t -> Mono.empty());
     }
 }
