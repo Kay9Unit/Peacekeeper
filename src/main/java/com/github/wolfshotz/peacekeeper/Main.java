@@ -194,15 +194,15 @@ public class Main
     private static Mono<User> banUserIn(User user, Flux<Guild> guilds, Member executor, String reason)
     {
         return guilds.flatMap(guild -> guild.ban(user.getId(), spec -> spec.setReason(reason))
-                .flatMap(__ -> guild.getPublicUpdatesChannel()
-                        .flatMap(channel -> channel.createEmbed(spec -> createBanEmbed(spec, user, executor, reason)))))
+                .then(guild.getPublicUpdatesChannel()
+                        .flatMap(channel -> channel.createEmbed(spec -> createBanEmbed(spec, user, executor, guild, reason)))))
                 .then(Mono.just(user));
     }
 
-    private static void createBanEmbed(EmbedCreateSpec spec, User user, Member executor, String reason)
+    private static void createBanEmbed(EmbedCreateSpec spec, User user, Member executor, Guild guild, String reason)
     {
-        spec.setAuthor(executor.getUsername(), null, executor.getAvatarUrl())
-                .setTitle("User `%s` (ID: `%s`) has been banned across all servers")
+        spec.setAuthor(executor.getUsername() + " || " + guild.getName(), null, executor.getAvatarUrl())
+                .setTitle(String.format("User `%s` (ID: `%s`) has been banned globally.", user.getTag(), user.getId().asString()))
                 .setThumbnail(user.getAvatarUrl())
                 .setDescription("**Reason:** " + reason)
                 .setColor(Color.RED)
