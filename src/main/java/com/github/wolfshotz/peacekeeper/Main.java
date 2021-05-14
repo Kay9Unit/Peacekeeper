@@ -14,21 +14,19 @@ import discord4j.core.object.entity.User;
 import discord4j.core.spec.EmbedCreateSpec;
 import discord4j.discordjson.json.ApplicationCommandOptionData;
 import discord4j.discordjson.json.ApplicationCommandRequest;
+import discord4j.discordjson.json.WebhookMessageEditRequest;
 import discord4j.rest.RestClient;
 import discord4j.rest.http.client.ClientException;
 import discord4j.rest.interaction.InteractionResponse;
 import discord4j.rest.json.response.ErrorResponse;
 import discord4j.rest.util.ApplicationCommandOptionType;
 import discord4j.rest.util.Color;
-import discord4j.rest.util.Permission;
 import org.reactivestreams.Publisher;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 import reactor.util.Logger;
 import reactor.util.Loggers;
-import reactor.util.annotation.Nullable;
 
-import javax.naming.NoPermissionException;
 import java.io.BufferedReader;
 import java.io.IOException;
 import java.io.InputStreamReader;
@@ -41,7 +39,7 @@ import java.util.stream.Collectors;
 public class Main
 {
     private static final Logger LOG = Loggers.getLogger(Main.class);
-    private static final String ADMINS_URL = "https://github.com/WolfShotz/Peacekeeper/blob/dca50ea0f8f0426e0d23d83e1c98f1ff9e4071a5/src/main/resources/admins.txt";
+    private static final String ADMINS_URL = "https://raw.githubusercontent.com/WolfShotz/Peacekeeper/master/src/main/resources/admins.txt";
     private static final List<Long> ADMIN_LIST = Collections.synchronizedList(new ArrayList<>());
 
     public static void main(String[] args)
@@ -49,7 +47,7 @@ public class Main
         GatewayDiscordClient client = DiscordClient.create(System.getProperty("token")).login().block();
 
         refreshCommands(client);
-//        collectAdmins();
+        collectAdmins();
 
         Executors.newSingleThreadExecutor().submit(() -> console(client));
         Runtime.getRuntime().addShutdownHook(new Thread(() -> client.logout().block()));
@@ -63,6 +61,12 @@ public class Main
                 {
                     case "globalban":
                         return globalBan(client, event);
+                    case "refresh_admins":
+                        return event.acknowledge()
+                                .then(event.getInteractionResponse()
+                                        .createFollowupMessage("Admin list reloaded <a:loading:842766889033793536>"))
+                                .doOnNext(data -> refreshAdmins(event, data.id().asLong()));
+
                     case "ping":
                         return event.acknowledge()
                                 .then(event.getInteractionResponse()
@@ -74,6 +78,19 @@ public class Main
         }).blockLast();
 
         client.onDisconnect().block();
+    }
+
+    private static void refreshAdmins(InteractionCreateEvent event, long messageId)
+    {
+        Executors.newSingleThreadExecutor().submit(() ->
+        {
+            collectAdmins();
+            event.getInteractionResponse()
+                    .editFollowupMessage(messageId, WebhookMessageEditRequest.builder()
+                            .content("Refreshed admin list \uD83D\uDC4D")
+                            .build(), false)
+                    .block();
+        });
     }
 
     private static void refreshCommands(GatewayDiscordClient client)
@@ -98,17 +115,21 @@ public class Main
                         .build())
                 .build();
 
+        ApplicationCommandRequest refreshAdmins = ApplicationCommandRequest.builder()
+                .name("refresh_admins")
+                .description("Re-Retrieves the admin list from the host")
+                .build();
+        
         ApplicationCommandRequest ping = ApplicationCommandRequest.builder()
                 .name("ping")
                 .description("pong!")
                 .build();
 
-        List<ApplicationCommandRequest> list = Arrays.asList(globalBan, ping);
+        List<ApplicationCommandRequest> list = Arrays.asList(globalBan, refreshAdmins, ping);
 
         rest.getApplicationService()
                 .bulkOverwriteGlobalApplicationCommand(appId, list)
                 .doOnError(e -> LOG.error("Something happend registering a command...", e))
-                .onErrorResume(e -> Mono.empty())
                 .blockLast();
 
         LOG.info("Commands Initalized: {}", list.stream()
@@ -152,6 +173,11 @@ public class Main
     private static Publisher<?> globalBan(GatewayDiscordClient client, InteractionCreateEvent event)
     {
         InteractionResponse response = event.getInteractionResponse();
+        Member executor = event.getInteraction().getMember().orElse(null);
+
+        if (!ADMIN_LIST.contains(executor.getId().asLong()))
+            return response.createFollowupMessage("You don't have permission to use this, buddy.");
+
         ApplicationCommandInteraction args = event.getInteraction().getCommandInteraction();
         long userId = args.getOption("userid")
                 .flatMap(ApplicationCommandInteractionOption::getValue)
@@ -163,10 +189,7 @@ public class Main
                 .map(ApplicationCommandInteractionOptionValue::asString)
                 .orElse("<No Reason Specified>");
 
-        Member executor = event.getInteraction().getMember().orElse(null);
-
         return event.acknowledge()
-                .then(ensurePermissions(executor))
                 .then(client.getUserById(Snowflake.of(userId)))
                 .flatMap(user -> banUserIn(user, client.getGuilds(), executor, reason))
                 .flatMap(user -> response.createFollowupMessage(String.format("User `%s` (ID: `%s`) has been banned across all servers for: \"%s\"", user.getTag(), user.getId().asString(), reason)))
@@ -182,16 +205,7 @@ public class Main
 
                     LOG.error("Unable to process ban", e);
                     return response.createFollowupMessage("SOMETHING went wrong when banning...");
-                })
-                .onErrorResume(NoPermissionException.class, e -> response.createFollowupMessage("You don't have permission to use this, buddy."));
-    }
-
-    private static Mono<Void> ensurePermissions(@Nullable Member member)
-    {
-        if (member != null)
-            return member.getBasePermissions()
-                    .flatMap(set -> set.contains(Permission.BAN_MEMBERS)? Mono.empty() : Mono.error(new NoPermissionException()));
-        return Mono.error(new NoPermissionException());
+                });
     }
 
     private static Mono<User> banUserIn(User user, Flux<Guild> guilds, Member executor, String reason)
@@ -217,31 +231,28 @@ public class Main
     private static void collectAdmins()
     {
         ADMIN_LIST.clear();
-        BufferedReader reader;
-
-        try (InputStreamReader stream = new InputStreamReader(new URL(ADMINS_URL).openStream()))
-        {
-            reader = new BufferedReader(stream);
-        }
-        catch (IOException e)
-        {
-            e.printStackTrace();
-            reader = new BufferedReader(new InputStreamReader(Main.class.getResourceAsStream("admins.txt")));
-        }
+        InputStreamReader reader;
 
         try
         {
-            String line;
-            while ((line = reader.readLine()) != null)
-            {
-                ADMIN_LIST.add(Long.parseLong(line.substring(0, 18).trim()));
-            }
-            reader.close();
+            reader = new InputStreamReader(new URL(ADMINS_URL).openStream());
         }
         catch (IOException e)
         {
-            LOG.error("Could not Load admins. Shutting down.", e);
-            System.exit(-1);
+            reader = new InputStreamReader(Main.class.getResourceAsStream("admins.txt"));
+        }
+
+        try (BufferedReader pointer = new BufferedReader(reader))
+        {
+            if (reader == null) throw new NullPointerException("Could not retrieve InputStream for admin list");
+
+            String line;
+            while ((line = pointer.readLine()) != null)
+                ADMIN_LIST.add(Long.parseLong(line.substring(0, 18).trim()));
+        }
+        catch (Exception e)
+        {
+            throw new RuntimeException("Could not Load admin list", e);
         }
     }
 }
