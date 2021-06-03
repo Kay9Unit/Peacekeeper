@@ -56,6 +56,12 @@ public abstract class Command implements ApplicationCommandRequest
         return options == null? Possible.absent() : Possible.of(options);
     }
 
+    @Override
+    public String toString()
+    {
+        return name;
+    }
+
     public abstract Mono<MessageData> execute(InteractionCreateEvent event);
 
     public static Map<String, Command> compile(Command... cmds)

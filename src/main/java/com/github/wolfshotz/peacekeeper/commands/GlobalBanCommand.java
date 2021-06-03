@@ -27,9 +27,9 @@ import java.time.Instant;
 
 public class GlobalBanCommand extends Command
 {
-    public GlobalBanCommand()
+    public GlobalBanCommand(String name, String description)
     {
-        super("globalban", "Ban a user across multiple servers.");
+        super(name, description);
 
         arg(ApplicationCommandOptionData.builder()
                 .name("userid")
@@ -69,7 +69,7 @@ public class GlobalBanCommand extends Command
         return event.acknowledge()
                 .then(client.getUserById(Snowflake.of(userId)))
                 .flatMap(user -> banUserChecked(user, client.getGuilds(), executor, reason))
-                .flatMap(user -> response.createFollowupMessage(String.format("User `%s` (ID: `%s`) has been banned across all servers for: \"%s\"", user.getTag(), user.getId().asString(), reason)))
+                .flatMap(user -> response.createFollowupMessage(createFollowupMessage(user, reason)))
                 .onErrorResume(ClientException.class, e ->
                 {
                     if (e.getErrorResponse().isPresent())
@@ -80,14 +80,14 @@ public class GlobalBanCommand extends Command
                             return response.createFollowupMessage("Are you gonna supply an ACTUAL user id?");
                     }
 
-                    Main.LOG.error("Unable to process ban", e);
-                    return response.createFollowupMessage("SOMETHING went wrong when banning...");
+                    Main.LOG.error("Unable to process", e);
+                    return response.createFollowupMessage("SOMETHING went wrong when performing that...");
                 })
                 .onErrorResume(IllegalArgumentException.class, e -> response.createFollowupMessage(e.getLocalizedMessage()));
     }
 
 
-    private static Mono<User> banUserChecked(User user, Flux<Guild> guilds, Member executor, String reason)
+    protected Mono<User> banUserChecked(User user, Flux<Guild> guilds, Member executor, String reason)
     {
         return (AdminList.contains(user)?
                 Flux.error(new IllegalArgumentException("This user cannot be banned")) :
@@ -95,15 +95,16 @@ public class GlobalBanCommand extends Command
         ).then(Mono.just(user));
     }
 
-    private static Flux<Message> banUserIn(User user, Flux<Guild> guilds, Member executor, String reason)
+    protected Flux<Message> banUserIn(User user, Flux<Guild> guilds, Member executor, String reason)
     {
         return guilds.flatMap(guild -> guild.ban(user.getId(), spec -> spec.setReason(reason))
                 .then(executor.getGuild())
                 .flatMap(from -> guild.getPublicUpdatesChannel()
-                        .flatMap(channel -> createBanEmbed(channel, user, executor, from, reason))));
+                        .flatMap(channel -> createBanEmbed(channel, user, executor, from, reason))))
+                .onErrorResume(t -> Flux.empty());
     }
 
-    private static Mono<Message> createBanEmbed(TextChannel channel, User user, Member executor, Guild guild, String reason)
+    protected Mono<Message> createBanEmbed(TextChannel channel, User user, Member executor, Guild guild, String reason)
     {
         return channel.createEmbed(spec -> spec.setAuthor(executor.getUsername() + " || " + guild.getName(), null, executor.getAvatarUrl())
                 .setTitle(String.format("User `%s` (ID: `%s`) has been banned globally.", user.getTag(), user.getId().asString()))
@@ -112,5 +113,13 @@ public class GlobalBanCommand extends Command
                 .setColor(Color.RED)
                 .setTimestamp(Instant.now()))
                 .onErrorResume(t -> Mono.empty());
+    }
+
+    protected String createFollowupMessage(User user, String reason)
+    {
+        return String.format("User `%s` (ID: `%s`) has been banned across all servers for: \"%s\"",
+                user.getTag(),
+                user.getId().asString(),
+                reason);
     }
 }
