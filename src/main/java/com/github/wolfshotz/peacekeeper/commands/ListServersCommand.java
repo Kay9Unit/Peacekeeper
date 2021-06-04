@@ -21,6 +21,7 @@ public class ListServersCommand extends Command
                         .getGuilds()
                         .map(g -> "`" + g.getName() + "`")
                         .collect(Collectors.toList()))
-                .flatMap(l -> event.getInteractionResponse().createFollowupMessage("Peacekeeper currently resides in: " + l));
+                .flatMap(l -> event.getInteractionResponse()
+                        .createFollowupMessage(String.format("Peacekeeper currently resides in %s servers: %s", l.size(), l)));
     }
 }

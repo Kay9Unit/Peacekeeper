@@ -1,5 +1,6 @@
 package com.github.wolfshotz.peacekeeper.commands;
 
+import com.github.wolfshotz.peacekeeper.ErrorCodes;
 import discord4j.core.object.entity.Guild;
 import discord4j.core.object.entity.Member;
 import discord4j.core.object.entity.Message;
@@ -22,10 +23,10 @@ public class GlobalUnbanCommand extends GlobalBanCommand
     protected Flux<Message> banUserIn(User user, Flux<Guild> guilds, Member executor, String reason)
     {
         return guilds.flatMap(guild -> guild.unban(user.getId(), reason)
+                .onErrorResume(clientError(ErrorCodes.UNKNOWN_BAN), t -> Mono.empty())
                 .then(executor.getGuild())
                 .flatMap(from -> guild.getPublicUpdatesChannel()
-                        .flatMap(channel -> createBanEmbed(channel, user, executor, from, reason))))
-                .onErrorResume(t -> Flux.empty());
+                        .flatMap(channel -> createBanEmbed(channel, user, executor, from, reason))));
     }
 
     @Override

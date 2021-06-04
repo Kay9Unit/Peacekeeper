@@ -1,7 +1,7 @@
 package com.github.wolfshotz.peacekeeper.commands;
 
 import com.github.wolfshotz.peacekeeper.AdminList;
-import com.github.wolfshotz.peacekeeper.Main;
+import com.github.wolfshotz.peacekeeper.ErrorCodes;
 import discord4j.common.util.Snowflake;
 import discord4j.core.GatewayDiscordClient;
 import discord4j.core.event.domain.InteractionCreateEvent;
@@ -15,9 +15,7 @@ import discord4j.core.object.entity.User;
 import discord4j.core.object.entity.channel.TextChannel;
 import discord4j.discordjson.json.ApplicationCommandOptionData;
 import discord4j.discordjson.json.MessageData;
-import discord4j.rest.http.client.ClientException;
 import discord4j.rest.interaction.InteractionResponse;
-import discord4j.rest.json.response.ErrorResponse;
 import discord4j.rest.util.ApplicationCommandOptionType;
 import discord4j.rest.util.Color;
 import reactor.core.publisher.Flux;
@@ -41,7 +39,7 @@ public class GlobalBanCommand extends Command
                 .name("reason")
                 .description("A reason for the ban")
                 .type(ApplicationCommandOptionType.STRING.getValue())
-                .required(false)
+                .required(true)
                 .build());
     }
 
@@ -59,38 +57,24 @@ public class GlobalBanCommand extends Command
         long userId = args.getOption("userid")
                 .flatMap(ApplicationCommandInteractionOption::getValue)
                 .map(ApplicationCommandInteractionOptionValue::asString)
-                .map(Long::parseLong)
-                .orElse(1L);
+                .map(GlobalBanCommand::parseLongSafely)
+                .orElse(0L);
         String reason = args.getOption("reason")
                 .flatMap(ApplicationCommandInteractionOption::getValue)
                 .map(ApplicationCommandInteractionOptionValue::asString)
                 .orElse("<No Reason Specified>");
 
         return event.acknowledge()
-                .then(client.getUserById(Snowflake.of(userId)))
+                .then(client.getUserById(Snowflake.of(userId))
+                        .onErrorMap(clientError(ErrorCodes.UNKNOWN_USER), t -> new CommandException("Are you gonna supply an ACTUAL user id?", t)))
                 .flatMap(user -> banUserChecked(user, client.getGuilds(), executor, reason))
-                .flatMap(user -> response.createFollowupMessage(createFollowupMessage(user, reason)))
-                .onErrorResume(ClientException.class, e ->
-                {
-                    if (e.getErrorResponse().isPresent())
-                    {
-                        ErrorResponse er = e.getErrorResponse().get();
-                        Object obj = er.getFields().get("message");
-                        if (obj instanceof String && "Unknown User".equals(obj))
-                            return response.createFollowupMessage("Are you gonna supply an ACTUAL user id?");
-                    }
-
-                    Main.LOG.error("Unable to process", e);
-                    return response.createFollowupMessage("SOMETHING went wrong when performing that...");
-                })
-                .onErrorResume(IllegalArgumentException.class, e -> response.createFollowupMessage(e.getLocalizedMessage()));
+                .flatMap(user -> response.createFollowupMessage(createFollowupMessage(user, reason)));
     }
-
 
     protected Mono<User> banUserChecked(User user, Flux<Guild> guilds, Member executor, String reason)
     {
         return (AdminList.contains(user)?
-                Flux.error(new IllegalArgumentException("This user cannot be banned")) :
+                Flux.error(new CommandException("This user cann't be banned, idjot.")) :
                 banUserIn(user, guilds, executor, reason)
         ).then(Mono.just(user));
     }
@@ -98,10 +82,10 @@ public class GlobalBanCommand extends Command
     protected Flux<Message> banUserIn(User user, Flux<Guild> guilds, Member executor, String reason)
     {
         return guilds.flatMap(guild -> guild.ban(user.getId(), spec -> spec.setReason(reason))
+                .onErrorResume(clientError(ErrorCodes.ALREADY_BANNED), t -> Mono.empty())
                 .then(executor.getGuild())
                 .flatMap(from -> guild.getPublicUpdatesChannel()
-                        .flatMap(channel -> createBanEmbed(channel, user, executor, from, reason))))
-                .onErrorResume(t -> Flux.empty());
+                        .flatMap(channel -> createBanEmbed(channel, user, executor, from, reason))));
     }
 
     protected Mono<Message> createBanEmbed(TextChannel channel, User user, Member executor, Guild guild, String reason)
@@ -121,5 +105,17 @@ public class GlobalBanCommand extends Command
                 user.getTag(),
                 user.getId().asString(),
                 reason);
+    }
+
+    private static long parseLongSafely(String s)
+    {
+        try
+        {
+            return Long.parseLong(s);
+        }
+        catch (NumberFormatException e)
+        {
+            return 0L;
+        }
     }
 }

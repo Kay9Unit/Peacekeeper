@@ -8,12 +8,12 @@ import discord4j.discordjson.json.ApplicationCommandOptionData;
 import discord4j.discordjson.json.ApplicationCommandRequest;
 import discord4j.discordjson.json.MessageData;
 import discord4j.discordjson.possible.Possible;
+import discord4j.rest.http.client.ClientException;
+import discord4j.rest.json.response.ErrorResponse;
 import reactor.core.publisher.Mono;
 
-import java.util.ArrayList;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
+import java.util.*;
+import java.util.function.Predicate;
 
 @JsonSerialize
 @JsonDeserialize
@@ -69,5 +69,23 @@ public abstract class Command implements ApplicationCommandRequest
         Map<String, Command> map = new HashMap<>();
         for (Command cmd : cmds) map.put(cmd.name(), cmd);
         return map;
+    }
+
+    public static Predicate<Throwable> clientError(int errorCode)
+    {
+        return t ->
+        {
+            if (t instanceof ClientException)
+            {
+                ClientException exception = (ClientException) t;
+                Optional<ErrorResponse> er = exception.getErrorResponse();
+                if (er.isPresent())
+                {
+                    Object obj = er.get().getFields().get("code");
+                    return obj instanceof Integer && obj.equals(errorCode);
+                }
+            }
+            return false;
+        };
     }
 }
